@@ -2,7 +2,7 @@
 
 TandemRLVR is a small research infrastructure project for studying **Tandem Reinforcement Learning with Verifiable Rewards**: evaluating whether a stronger "senior" reasoning agent can produce intermediate reasoning that remains useful to a weaker "junior" agent.
 
-This repository currently implements **Stages 1 and 2**: a minimal, testable evaluation scaffold with synthetic tasks, tandem handoff evaluation, and corrupted-handoff robustness tests. It does not implement RL training, PPO/GRPO, learned rewards, or real language-model agents yet.
+This repository currently implements **Stages 1-3**: a minimal, testable evaluation scaffold with synthetic tasks, tandem handoff evaluation, corrupted-handoff robustness tests, and local LLM agent wrappers through Ollama. It does not implement RL training, PPO/GRPO, or learned rewards yet.
 
 ## Research Motivation
 
@@ -42,13 +42,11 @@ Implemented:
 
 Not implemented yet:
 
-- Real LLM wrappers.
 - Hugging Face or API model integrations.
 - RL training.
 - PPO/GRPO.
 - Process rewards.
 - Learned legibility rewards.
-- Real LLM agents.
 
 ## Stage 2: Task Diversity and Corrupted Handoff Robustness
 
@@ -88,6 +86,63 @@ Outputs:
 outputs/stage2_results.csv
 outputs/stage2_summary.json
 ```
+
+## Stage 3: Local LLM Agent Evaluation
+
+Stage 3 moves beyond heuristic agents by adding local LLM wrappers. This makes it possible to ask the core TandemRLVR question with real model behavior: can a stronger local model produce reasoning traces that help a weaker local model solve verifiable tasks?
+
+Ollama is used first because it is free, local, lightweight to integrate, and supports configurable model names such as `llama3.2:1b`, `llama3.2:3b`, `llama3.1:8b`, `mistral`, `gemma3`, and `qwen2.5`. The heuristic agents remain available as deterministic baselines.
+
+Install dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+Install Ollama from <https://ollama.com>, start the local server, then pull models:
+
+```bash
+ollama pull llama3.2:1b
+ollama pull llama3.2:3b
+```
+
+Run a local LLM evaluation:
+
+```bash
+python -m tandem_rlvr.experiments.run_stage3_llm_eval \
+  --num-tasks 50 \
+  --seed 42 \
+  --senior-model llama3.2:3b \
+  --junior-model llama3.2:1b
+```
+
+Quick smoke run:
+
+```bash
+python -m tandem_rlvr.experiments.run_stage3_llm_eval \
+  --num-tasks 20 \
+  --seed 42 \
+  --senior-model llama3.2:1b \
+  --junior-model llama3.2:1b \
+  --quick
+```
+
+Outputs:
+
+```text
+outputs/stage3_llm_results.csv
+outputs/stage3_llm_summary.json
+```
+
+Interpretation:
+
+- `handoff_gain` measures how much tandem handoff improves over junior-only performance.
+- `robustness_drop` measures how much performance falls when the senior reasoning is perturbed.
+- Parse-status counts help separate model reasoning failures from output-format failures.
+
+If Ollama is unavailable, the experiment exits with a clear message asking you to install Ollama, run `ollama serve`, and pull a model such as `llama3.2:1b`.
+
+Stage 3 does not perform RL fine-tuning yet. It evaluates real local LLMs inside the TandemRLVR scaffold. RLVR training will be introduced in a later stage.
 
 ## Installation
 
@@ -153,8 +208,8 @@ The current agents are deliberately simple. `OracleSeniorAgent` produces compact
 
 Future stages:
 
-- Stage 3: add LLM wrappers for local Hugging Face and API-based models.
-- Stage 4: add explicit legibility and process-reward metrics.
-- Stage 5: add an RLVR training loop.
-- Stage 6: add generalization splits and ablations.
-- Stage 7: write a paper-style report.
+- Stage 4: add legibility and process-reward metrics.
+- Stage 5: add generalization splits and out-of-distribution evaluations.
+- Stage 6: add an RLVR training loop.
+- Stage 7: compare standard RLVR vs TandemRLVR.
+- Stage 8: write a paper-style report with plots, ablations, and limitations.

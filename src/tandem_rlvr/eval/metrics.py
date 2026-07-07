@@ -59,7 +59,7 @@ def compute_summary(results: pd.DataFrame) -> EvaluationSummary:
     senior_correct = int(results["senior_only_correct"].sum())
     junior_correct = int(results["junior_only_correct"].sum())
     tandem_correct = int(results["tandem_handoff_correct"].sum())
-    corrupted_correct = int(results["corrupted_handoff_correct"].sum())
+    corrupted_correct = _correct_count(results, "corrupted_handoff")
 
     senior_acc = _accuracy(senior_correct, num_tasks)
     junior_acc = _accuracy(junior_correct, num_tasks)
@@ -97,7 +97,7 @@ def _accuracy(correct: int, total: int) -> float:
 
 def _failure_counts(results: pd.DataFrame) -> dict[str, int]:
     return {
-        mode: int((~results[f"{mode}_correct"].astype(bool)).sum())
+        mode: int((~results[f"{mode}_correct"].astype(bool)).sum()) if f"{mode}_correct" in results else 0
         for mode in MODES
     }
 
@@ -110,7 +110,14 @@ def _grouped_accuracy(results: pd.DataFrame, group_column: str) -> dict[str, dic
     grouped: dict[str, dict[str, float]] = {}
     for group_value, group in results.groupby(group_column):
         grouped[str(group_value)] = {
-            mode: _accuracy(int(group[f"{mode}_correct"].sum()), len(group))
+            mode: _accuracy(_correct_count(group, mode), len(group))
             for mode in MODES
         }
     return grouped
+
+
+def _correct_count(results: pd.DataFrame, mode: str) -> int:
+    column = f"{mode}_correct"
+    if column not in results:
+        return 0
+    return int(results[column].sum())

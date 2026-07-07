@@ -28,11 +28,13 @@ class EvaluationRunner:
         junior_agent: Agent,
         perturbation_fn: Callable[[str, random.Random], str] = light_noise,
         seed: int | None = None,
+        include_corrupted_handoff: bool = True,
     ) -> None:
         self.senior_agent = senior_agent
         self.junior_agent = junior_agent
         self.perturbation_fn = perturbation_fn
         self._rng = random.Random(seed)
+        self.include_corrupted_handoff = include_corrupted_handoff
 
     def run(self, tasks: list[Task], output_path: str | Path | None = None) -> EvaluationResult:
         rows = [self._evaluate_task(task) for task in tasks]
@@ -49,17 +51,14 @@ class EvaluationRunner:
     def _evaluate_task(self, task: Task) -> dict[str, object]:
         senior_only = self.senior_agent.answer(task)
         junior_only = self.junior_agent.answer(task)
-        senior_handoff = self.senior_agent.answer(task)
+        senior_handoff = self._senior_handoff(task)
         tandem = self.junior_agent.answer(task, context=senior_handoff.reasoning)
-        corrupted_reasoning = self.perturbation_fn(senior_handoff.reasoning, self._rng)
-        corrupted = self.junior_agent.answer(task, context=corrupted_reasoning)
 
         senior_correct = verify_final_answer(task, senior_only.final_answer)
         junior_correct = verify_final_answer(task, junior_only.final_answer)
         tandem_correct = verify_final_answer(task, tandem.final_answer)
-        corrupted_correct = verify_final_answer(task, corrupted.final_answer)
 
-        return {
+        row: dict[str, object] = {
             "task_id": task.task_id,
             "task_type": task.task_type,
             "difficulty": task.difficulty,
@@ -73,8 +72,22 @@ class EvaluationRunner:
             "tandem_handoff_answer": tandem.final_answer,
             "tandem_handoff_correct": tandem_correct,
             "tandem_junior_reasoning": tandem.reasoning,
-            "corrupted_reasoning": corrupted_reasoning,
-            "corrupted_handoff_answer": corrupted.final_answer,
-            "corrupted_handoff_correct": corrupted_correct,
-            "corrupted_junior_reasoning": corrupted.reasoning,
         }
+        if self.include_corrupted_handoff:
+            corrupted_reasoning = self.perturbation_fn(senior_handoff.reasoning, self._rng)
+            corrupted = self.junior_agent.answer(task, context=corrupted_reasoning)
+            row.update(
+                {
+                    "corrupted_reasoning": corrupted_reasoning,
+                    "corrupted_handoff_answer": corrupted.final_answer,
+                    "corrupted_handoff_correct": verify_final_answer(task, corrupted.final_answer),
+                    "corrupted_junior_reasoning": corrupted.reasoning,
+                }
+            )
+        return row
+
+    def _senior_handoff(self, task: Task):
+        handoff_fn = getattr(self.senior_agent, "produce_handoff", None)
+        if callable(handoff_fn):
+            return handoff_fn(task)
+        return self.senior_agent.answer(task)

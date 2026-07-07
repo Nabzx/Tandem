@@ -32,10 +32,24 @@ def main() -> None:
     runner = EvaluationRunner(
         senior_agent=OracleSeniorAgent(),
         junior_agent=WeakJuniorAgent(),
+        include_corrupted_handoff=False,
     )
     result = runner.run(tasks, output_path=args.output_path)
 
-    summary = pd.DataFrame([result.summary.as_dict()])
+    summary_columns = [
+        "num_tasks",
+        "senior_only_correct",
+        "senior_only_incorrect",
+        "junior_only_correct",
+        "junior_only_incorrect",
+        "tandem_handoff_correct",
+        "tandem_handoff_incorrect",
+        "senior_only_accuracy",
+        "junior_only_accuracy",
+        "tandem_handoff_accuracy",
+        "handoff_gain",
+    ]
+    summary = pd.DataFrame([{key: result.summary.as_dict()[key] for key in summary_columns}])
     print("\nStage 1 baseline summary")
     print(summary.to_string(index=False))
     print(f"\nWrote per-task results to {args.output_path}")

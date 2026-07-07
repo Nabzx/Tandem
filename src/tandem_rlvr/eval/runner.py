@@ -2,11 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import random
+from collections.abc import Callable
 
 import pandas as pd
 
 from tandem_rlvr.agents.base import Agent
 from tandem_rlvr.eval.metrics import EvaluationSummary, compute_summary
+from tandem_rlvr.eval.perturbations import light_noise
 from tandem_rlvr.tasks.base import Task
 from tandem_rlvr.tasks.verifiers import verify_final_answer
 from tandem_rlvr.utils.io import ensure_parent_dir
@@ -19,9 +22,17 @@ class EvaluationResult:
 
 
 class EvaluationRunner:
-    def __init__(self, senior_agent: Agent, junior_agent: Agent) -> None:
+    def __init__(
+        self,
+        senior_agent: Agent,
+        junior_agent: Agent,
+        perturbation_fn: Callable[[str, random.Random], str] = light_noise,
+        seed: int | None = None,
+    ) -> None:
         self.senior_agent = senior_agent
         self.junior_agent = junior_agent
+        self.perturbation_fn = perturbation_fn
+        self._rng = random.Random(seed)
 
     def run(self, tasks: list[Task], output_path: str | Path | None = None) -> EvaluationResult:
         rows = [self._evaluate_task(task) for task in tasks]
@@ -40,10 +51,13 @@ class EvaluationRunner:
         junior_only = self.junior_agent.answer(task)
         senior_handoff = self.senior_agent.answer(task)
         tandem = self.junior_agent.answer(task, context=senior_handoff.reasoning)
+        corrupted_reasoning = self.perturbation_fn(senior_handoff.reasoning, self._rng)
+        corrupted = self.junior_agent.answer(task, context=corrupted_reasoning)
 
         senior_correct = verify_final_answer(task, senior_only.final_answer)
         junior_correct = verify_final_answer(task, junior_only.final_answer)
         tandem_correct = verify_final_answer(task, tandem.final_answer)
+        corrupted_correct = verify_final_answer(task, corrupted.final_answer)
 
         return {
             "task_id": task.task_id,
@@ -59,4 +73,8 @@ class EvaluationRunner:
             "tandem_handoff_answer": tandem.final_answer,
             "tandem_handoff_correct": tandem_correct,
             "tandem_junior_reasoning": tandem.reasoning,
+            "corrupted_reasoning": corrupted_reasoning,
+            "corrupted_handoff_answer": corrupted.final_answer,
+            "corrupted_handoff_correct": corrupted_correct,
+            "corrupted_junior_reasoning": corrupted.reasoning,
         }

@@ -17,9 +17,20 @@ class RandomAgent:
         self.answer_high = answer_high
 
     def answer(self, task: Task, context: str | None = None) -> AgentResponse:
-        guess = self._rng.randint(self.answer_low, self.answer_high)
+        guess = self._guess(task)
         return AgentResponse(
             reasoning="Guessed randomly.",
-            final_answer=str(guess),
+            final_answer=guess,
             metadata={"used_context": context is not None},
         )
+
+    def _guess(self, task: Task) -> str:
+        answer_type = task.metadata.get("answer_type", "int")
+        if answer_type == "list_int":
+            values = [self._rng.randint(-5, 10) for _ in range(self._rng.randint(0, 4))]
+            return str(values)
+        if answer_type == "bool":
+            return self._rng.choice(["true", "false"])
+        if answer_type == "text":
+            return self._rng.choice(["Alice", "Bob", "Charlie", "unknown"])
+        return str(self._rng.randint(self.answer_low, self.answer_high))

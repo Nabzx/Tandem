@@ -24,6 +24,13 @@ def test_parse_fallback_text() -> None:
     assert parsed.metadata["parse_status"] == "fallback_text"
 
 
+def test_truncated_json_is_parse_failed() -> None:
+    parsed = parse_llm_response('{"reasoning": "partial", "final_answer": "42"')
+
+    assert parsed.final_answer == ""
+    assert parsed.metadata["parse_status"] == "parse_failed"
+
+
 def test_normalize_llm_answer_common_cases() -> None:
     int_task = Task("t1", "addition", "What is 20 + 22?", "42", "easy", {})
     bool_task = Task("t2", "logic", "Is it true?", "true", "easy", {"answer_type": "bool"})

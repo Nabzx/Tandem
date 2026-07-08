@@ -127,6 +127,109 @@ python -m tandem_rlvr.experiments.run_stage3_llm_eval \
   --quick
 ```
 
+For the fastest single-call check:
+
+```bash
+python -m tandem_rlvr.experiments.run_stage3_llm_eval \
+  --num-tasks 1 \
+  --seed 42 \
+  --senior-model llama3.2:1b \
+  --junior-model llama3.2:1b \
+  --quick \
+  --modes senior_only \
+  --verbose
+```
+
+Useful debugging flags:
+
+- `--verbose` prints prompt previews, raw model output previews, parse status, normalized answers, and correctness.
+- `--modes senior_only,junior_only,tandem,corrupted` lets you run only selected evaluation modes.
+- `--max-generation-seconds 60` controls the Ollama client timeout used for each local generation.
+- `--quick` uses short generations for local smoke tests.
+
+Troubleshooting:
+
+Local Ollama evaluation may look stuck if progress logging is disabled or if a model is slow, because each task can require multiple local model calls. Stage 3 now prints the task index, task type, and active mode as it runs. Use `--modes senior_only --num-tasks 1 --quick --verbose` to confirm that the model, parsing, and verification path work before launching a larger run.
+
+Recommended debugging ladder:
+
+Arithmetic senior-only sanity check:
+
+```bash
+python -m tandem_rlvr.experiments.run_stage3_llm_eval \
+  --num-tasks 10 \
+  --seed 42 \
+  --senior-model llama3.2:1b \
+  --junior-model llama3.2:1b \
+  --task-types arithmetic \
+  --modes senior_only \
+  --easy-only \
+  --quick \
+  --num-predict 192 \
+  --verbose
+```
+
+Stronger senior comparison:
+
+```bash
+python -m tandem_rlvr.experiments.run_stage3_llm_eval \
+  --num-tasks 20 \
+  --seed 42 \
+  --senior-model llama3.1:latest \
+  --junior-model llama3.2:1b \
+  --task-types arithmetic \
+  --modes senior_only,junior_only,tandem_handoff \
+  --easy-only \
+  --quick \
+  --num-predict 192 \
+  --verbose
+```
+
+`llama3.2:1b` is a tiny local model. Treat it as a weak junior or smoke-test model, not as a reliable senior reasoner.
+
+```bash
+python -m tandem_rlvr.experiments.run_stage3_llm_eval \
+  --num-tasks 5 \
+  --seed 42 \
+  --senior-model llama3.2:1b \
+  --junior-model llama3.2:1b \
+  --task-types arithmetic \
+  --modes senior_only \
+  --easy-only \
+  --quick \
+  --num-predict 192 \
+  --verbose \
+  --debug-save-prompts
+```
+
+```bash
+python -m tandem_rlvr.experiments.run_stage3_llm_eval \
+  --num-tasks 5 \
+  --seed 42 \
+  --senior-model llama3.2:1b \
+  --junior-model llama3.2:1b \
+  --task-types arithmetic \
+  --modes junior_only \
+  --easy-only \
+  --quick \
+  --num-predict 192 \
+  --verbose
+```
+
+```bash
+python -m tandem_rlvr.experiments.run_stage3_llm_eval \
+  --num-tasks 5 \
+  --seed 42 \
+  --senior-model llama3.2:1b \
+  --junior-model llama3.2:1b \
+  --task-types arithmetic \
+  --modes tandem_handoff \
+  --easy-only \
+  --quick \
+  --num-predict 192 \
+  --verbose
+```
+
 Outputs:
 
 ```text
@@ -139,6 +242,9 @@ Interpretation:
 - `handoff_gain` measures how much tandem handoff improves over junior-only performance.
 - `robustness_drop` measures how much performance falls when the senior reasoning is perturbed.
 - Parse-status counts help separate model reasoning failures from output-format failures.
+- `senior_handoff` is an internal generation step, not a scored mode. In tandem evaluation, only the junior completion row is scored; the senior handoff is stored as metadata on `tandem_handoff` or `corrupted_handoff` rows.
+- Modes that were not run are reported as `null` in `stage3_llm_summary.json`, not `0.0`. A null accuracy means skipped, not failed.
+- Easy arithmetic is mainly a smoke test for local model, parser, and verifier wiring. It is usually too easy to measure meaningful handoff gain because senior-only, junior-only, and tandem can all be high.
 
 If Ollama is unavailable, the experiment exits with a clear message asking you to install Ollama, run `ollama serve`, and pull a model such as `llama3.2:1b`.
 

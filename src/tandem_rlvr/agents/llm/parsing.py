@@ -33,6 +33,12 @@ def parse_llm_response(raw_output: str) -> ParsedLLMOutput:
         parsed = _try_json(extracted)
         if isinstance(parsed, dict):
             return _from_json_dict(parsed, raw_output, PARSE_EXTRACTED_JSON)
+    elif _looks_like_truncated_json(raw_output):
+        return ParsedLLMOutput(
+            reasoning=raw_output.strip(),
+            final_answer="",
+            metadata={"raw_output": raw_output, "parse_status": PARSE_FAILED},
+        )
 
     fallback_answer = _fallback_answer(raw_output)
     if fallback_answer is not None:
@@ -122,3 +128,8 @@ def _fallback_answer(raw_output: str) -> str | None:
         return answer_match.group(1).strip().strip('"')
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     return lines[-1] if lines else None
+
+
+def _looks_like_truncated_json(raw_output: str) -> bool:
+    text = raw_output.strip()
+    return text.startswith("{") and not text.endswith("}")

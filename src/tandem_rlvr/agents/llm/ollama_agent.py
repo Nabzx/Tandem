@@ -4,6 +4,7 @@ from typing import Any
 
 from tandem_rlvr.agents.base import AgentResponse
 from tandem_rlvr.agents.llm.config import OllamaGenerationConfig
+from tandem_rlvr.agents.llm.handoff_strategies import DEFAULT_HANDOFF_STRATEGY, get_handoff_strategy
 from tandem_rlvr.agents.llm.parsing import normalize_llm_answer, parse_llm_response
 from tandem_rlvr.agents.llm.prompts import (
     junior_direct_prompt,
@@ -82,8 +83,16 @@ class OllamaSeniorAgent(_BaseOllamaAgent):
     def answer(self, task: Task, context: str | None = None) -> AgentResponse:
         return self._complete(senior_direct_prompt(task), task)
 
-    def produce_handoff(self, task: Task) -> AgentResponse:
-        return self._complete(senior_handoff_prompt(task), task)
+    def produce_handoff(self, task: Task, strategy_name: str = DEFAULT_HANDOFF_STRATEGY) -> AgentResponse:
+        strategy = get_handoff_strategy(strategy_name)
+        return self._complete(
+            senior_handoff_prompt(
+                task,
+                handoff_strategy_name=strategy.name,
+                handoff_strategy_instruction=strategy.instruction,
+            ),
+            task,
+        )
 
 
 class OllamaJuniorAgent(_BaseOllamaAgent):

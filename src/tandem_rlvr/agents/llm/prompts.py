@@ -22,11 +22,21 @@ def senior_direct_prompt(task: Task) -> str:
     )
 
 
-def senior_handoff_prompt(task: Task) -> str:
+def senior_handoff_prompt(
+    task: Task,
+    handoff_strategy_name: str | None = None,
+    handoff_strategy_instruction: str | None = None,
+) -> str:
+    strategy_instructions = []
+    if handoff_strategy_name:
+        strategy_instructions.append(f"Handoff strategy: {handoff_strategy_name}.")
+    if handoff_strategy_instruction:
+        strategy_instructions.append(f"Strategy instruction: {handoff_strategy_instruction}")
     return _base_prompt(
         role="You are the stronger senior reasoning model preparing a handoff for a weaker model.",
         task=task,
         instructions=[
+            *strategy_instructions,
             "Produce useful partial reasoning that makes the task easier to continue.",
             "Do not reveal the final answer.",
             "Avoid private jargon and keep the trace inspectable.",

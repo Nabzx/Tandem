@@ -333,6 +333,56 @@ outputs/stage5_process_summary.json
 
 Stage 5 still does not perform RL training. It evaluates generalization behavior before introducing RLVR.
 
+## Stage 6: Handoff Policy Optimization
+
+Stage 6 adds a lightweight RLVR-style optimization loop over senior handoff strategies. Instead of updating model weights, it treats handoff prompt styles as actions in a bandit policy. Each episode samples a task, selects a handoff strategy, asks the senior for partial reasoning, lets the junior answer, scores the result with final-answer correctness plus Stage 4 process metrics, and updates the policy.
+
+Available handoff strategies:
+
+- `minimal_hint`
+- `structured_steps`
+- `worked_prefix`
+- `verification_hint`
+- `anti_hallucination`
+- `direct_teaching`
+
+The reward is intentionally transparent:
+
+```text
+1.00 * tandem_correct
++ 0.30 * process_reward_score
++ 0.20 * usefulness_score
+- 0.50 * leaks_exact_answer
+- 0.30 * hallucination_flag
+```
+
+Run Stage 6:
+
+```bash
+python -m tandem_rlvr.experiments.run_stage6_handoff_policy_optimization \
+  --num-episodes 30 \
+  --seed 42 \
+  --senior-model llama3.1:latest \
+  --junior-model llama3.2:1b \
+  --splits train,id_eval,ood_eval \
+  --bandit ucb1 \
+  --quick \
+  --num-predict 192
+```
+
+Outputs:
+
+```text
+outputs/stage6_bandit_episodes.csv
+outputs/stage6_bandit_summary.json
+outputs/stage6_strategy_eval.csv
+outputs/stage6_strategy_eval_summary.json
+```
+
+`stage6_bandit_episodes.csv` records the selected strategy, split, task family, junior answer, correctness, process metrics, leakage/hallucination flags, reward components, and raw senior/junior outputs. The summary files compare mean reward, selection counts, strategy accuracy, held-out split accuracy, and the learned best strategy against the default `structured_steps` strategy.
+
+This stage is a policy-optimization smoke test, not full RL model training. It is meant to answer whether simple reward-guided handoff selection improves tandem behavior before moving to heavier RLVR comparisons.
+
 ## Installation
 
 ```bash
@@ -398,6 +448,5 @@ The current agents are deliberately simple. `OracleSeniorAgent` produces compact
 
 Future stages:
 
-- Stage 6: add an RLVR training loop.
 - Stage 7: compare standard RLVR vs TandemRLVR.
 - Stage 8: write a paper-style report with plots, ablations, and limitations.

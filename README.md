@@ -370,6 +370,24 @@ python -m tandem_rlvr.experiments.run_stage6_handoff_policy_optimization \
   --num-predict 192
 ```
 
+For slower local machines or cold models, increase the generation timeout and optionally warm the models before the first episode:
+
+```bash
+python -m tandem_rlvr.experiments.run_stage6_handoff_policy_optimization \
+  --num-episodes 5 \
+  --seed 42 \
+  --senior-model llama3.1:latest \
+  --junior-model llama3.2:1b \
+  --splits id_eval \
+  --bandit ucb1 \
+  --quick \
+  --num-predict 96 \
+  --max-generation-seconds 120 \
+  --warmup
+```
+
+Stage 6 preflights Ollama by default. If a model is missing, run `ollama pull <model>`. If a generation times out, that episode is logged with `failure_type=timeout`, a negative reward, and the bandit continues to the next episode.
+
 Outputs:
 
 ```text

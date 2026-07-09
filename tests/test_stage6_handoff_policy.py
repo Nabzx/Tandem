@@ -1,14 +1,19 @@
 from pathlib import Path
+from argparse import Namespace
 
 import pytest
 
 from tandem_rlvr.agents.base import AgentResponse
+from tandem_rlvr.agents.llm import OllamaGenerationTimeout, OllamaModelNotFound
 from tandem_rlvr.agents.llm.handoff_strategies import HANDOFF_STRATEGIES, get_handoff_strategy, list_handoff_strategy_names
 from tandem_rlvr.agents.llm.prompts import senior_handoff_prompt
 from tandem_rlvr.experiments.run_stage6_handoff_policy_optimization import (
+    preflight_ollama_agents,
+    resolve_stage6_generation_settings,
     run_stage6_optimization,
     run_strategy_episode,
     summarize_strategy_eval,
+    warmup_ollama_agents,
 )
 from tandem_rlvr.rl import EpsilonGreedyBandit, UCB1Bandit, compute_handoff_reward
 from tandem_rlvr.tasks.base import Task
@@ -38,6 +43,36 @@ class FakeJunior:
                 "parse_status": "strict_json",
             },
         )
+
+
+class TimeoutOnceJunior(FakeJunior):
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def answer(self, task, context=None):
+        self.calls += 1
+        if self.calls == 1:
+            raise OllamaGenerationTimeout(
+                "Ollama generation timed out after 60 seconds. Try increasing --max-generation-seconds."
+            )
+        return super().answer(task, context)
+
+
+class FakeWarmupAgent:
+    def __init__(self) -> None:
+        self.warmup_calls = 0
+
+    def warmup(self) -> float:
+        self.warmup_calls += 1
+        return 0.25
+
+
+class MissingModelAgent:
+    def check_available(self) -> None:
+        return None
+
+    def check_model_available(self) -> None:
+        raise OllamaModelNotFound("Model not found. Run: ollama pull missing-model")
 
 
 def test_handoff_strategy_registry_contains_stage6_strategies() -> None:
@@ -143,6 +178,46 @@ def test_stage6_episode_logging_with_mocked_agents() -> None:
     assert row["senior_handoff_reasoning"]
     assert row["raw_senior_output"]
     assert row["raw_junior_output"]
+    assert row["senior_generation_seconds"] is not None
+    assert row["junior_generation_seconds"] is not None
+
+
+def test_stage6_timeout_becomes_failure_row() -> None:
+    task = build_split_benchmark(1, splits=["id_eval"], seed=42, task_families=["arithmetic"])[0]
+
+    row = run_strategy_episode(
+        episode=1,
+        task=task,
+        strategy_name="structured_steps",
+        senior_model="fake-senior",
+        junior_model="fake-junior",
+        senior_agent=FakeSenior(),
+        junior_agent=TimeoutOnceJunior(),
+    )
+
+    assert row["correct"] is False
+    assert row["failure_type"] == "timeout"
+    assert row["total_reward"] == -0.5
+    assert "timed out" in row["error"]
+
+
+def test_stage6_one_timeout_does_not_crash_full_run(tmp_path: Path) -> None:
+    result = run_stage6_optimization(
+        num_episodes=2,
+        seed=7,
+        senior_model="fake-senior",
+        junior_model="fake-junior",
+        splits=["id_eval"],
+        bandit_name="ucb1",
+        output_dir=tmp_path,
+        senior_agent=FakeSenior(),
+        junior_agent=TimeoutOnceJunior(),
+    )
+
+    episodes = result["episodes"]
+    assert len(episodes) == 2
+    assert "timeout" in set(episodes["failure_type"])
+    assert result["episodes_path"].exists()
 
 
 def test_stage6_optimization_writes_outputs_and_summary(tmp_path: Path) -> None:
@@ -189,3 +264,29 @@ def test_stage6_strategy_eval_summary_contains_heldout_views(tmp_path: Path) -> 
     assert "process_reward_by_strategy" in summary
     assert "accuracy_by_split_and_strategy" in summary
     assert "id_eval" in summary["accuracy_by_split_and_strategy"]
+
+
+def test_stage6_generation_settings_use_stage6_quick_defaults_and_overrides() -> None:
+    quick_args = Namespace(num_predict=None, quick=True, timeout_seconds=None, max_generation_seconds=None, temperature=0.0)
+    normal_args = Namespace(num_predict=None, quick=False, timeout_seconds=None, max_generation_seconds=None, temperature=0.0)
+    override_args = Namespace(num_predict=192, quick=True, timeout_seconds=None, max_generation_seconds=120, temperature=0.0)
+
+    assert resolve_stage6_generation_settings(quick_args) == (96, 60, 0.0)
+    assert resolve_stage6_generation_settings(normal_args) == (256, 120, 0.0)
+    assert resolve_stage6_generation_settings(override_args) == (192, 120, 0.0)
+
+
+def test_stage6_warmup_can_be_mocked() -> None:
+    senior = FakeWarmupAgent()
+    junior = FakeWarmupAgent()
+
+    timings = warmup_ollama_agents(senior, junior)
+
+    assert timings == {"senior": 0.25, "junior": 0.25}
+    assert senior.warmup_calls == 1
+    assert junior.warmup_calls == 1
+
+
+def test_stage6_preflight_model_missing_message() -> None:
+    with pytest.raises(OllamaModelNotFound, match="Model not found. Run: ollama pull missing-model"):
+        preflight_ollama_agents(MissingModelAgent(), FakeSenior())

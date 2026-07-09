@@ -286,6 +286,53 @@ outputs/stage4_process_metrics.csv
 outputs/stage4_process_summary.json
 ```
 
+## Stage 5: Generalization and OOD Evaluation
+
+Stage 5 tests whether tandem handoff helps only on easy in-distribution examples or continues to help under distribution shift. This matters because weak-overseer handoff should be robust to harder tasks, edge cases, and shifted formats rather than only improving familiar tasks.
+
+Splits:
+
+- `train`: reserved for future training-style use, currently generated but not trained on.
+- `id_eval`: in-distribution evaluation with smaller, simpler tasks.
+- `ood_eval`: shifted evaluation with larger numbers, negatives, duplicates, false logic cases, variable overwrites, and other controlled shifts.
+- `stress_eval`: harder synthetic edge cases such as distractor wording, longer chains, repeated values, zero/one arithmetic, empty-list-like cases, and longer code traces.
+
+Each Stage 5 task records:
+
+```text
+split
+distribution
+ood_type
+task_family
+```
+
+Stage 5 measures accuracy, handoff gain, robustness drop, and process-reward metrics by split. `ood_generalization_gap` is the difference between `id_eval` tandem accuracy and `ood_eval` tandem accuracy. `stress_generalization_gap` compares `id_eval` tandem accuracy to `stress_eval` tandem accuracy. Missing splits or modes are reported as `null`, not zero.
+
+Run Stage 5:
+
+```bash
+python -m tandem_rlvr.experiments.run_stage5_generalization_eval \
+  --num-tasks-per-split 30 \
+  --seed 42 \
+  --senior-model llama3.1:latest \
+  --junior-model llama3.2:1b \
+  --splits id_eval,ood_eval,stress_eval \
+  --modes senior_only,junior_only,tandem_handoff,corrupted_handoff \
+  --quick \
+  --num-predict 192
+```
+
+Outputs:
+
+```text
+outputs/stage5_generalization_results.csv
+outputs/stage5_generalization_summary.json
+outputs/stage5_process_metrics.csv
+outputs/stage5_process_summary.json
+```
+
+Stage 5 still does not perform RL training. It evaluates generalization behavior before introducing RLVR.
+
 ## Installation
 
 ```bash
@@ -351,7 +398,6 @@ The current agents are deliberately simple. `OracleSeniorAgent` produces compact
 
 Future stages:
 
-- Stage 5: add generalization splits and out-of-distribution evaluations.
 - Stage 6: add an RLVR training loop.
 - Stage 7: compare standard RLVR vs TandemRLVR.
 - Stage 8: write a paper-style report with plots, ablations, and limitations.

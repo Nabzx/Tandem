@@ -292,7 +292,11 @@ def _row(
     return {
         "task_id": task.task_id,
         "task_type": task.task_type,
+        "task_family": task.metadata.get("task_family", _infer_task_family(task.task_type)),
         "difficulty": task.difficulty,
+        "split": task.metadata.get("split", ""),
+        "distribution": task.metadata.get("distribution", ""),
+        "ood_type": task.metadata.get("ood_type", ""),
         "mode": mode,
         "senior_model": senior_model,
         "junior_model": junior_model,
@@ -582,6 +586,18 @@ def _safe_verify(task: Task, normalized_model_answer: str) -> tuple[bool, bool]:
 def _looks_truncated_json(raw_output: str) -> bool:
     stripped = raw_output.strip()
     return "{" in stripped and not stripped.endswith("}")
+
+
+def _infer_task_family(task_type: str) -> str:
+    if task_type in {"addition", "subtraction", "multiplication", "arithmetic_two_step"}:
+        return "arithmetic"
+    if task_type.startswith("list_"):
+        return "list"
+    if task_type.startswith("logic_"):
+        return "logic"
+    if task_type.startswith("code_trace_"):
+        return "code"
+    return "unknown"
 
 
 if __name__ == "__main__":

@@ -71,7 +71,11 @@ def compute_stage4_metrics(stage3_results: pd.DataFrame) -> pd.DataFrame:
             {
                 "task_id": row["task_id"],
                 "task_type": row["task_type"],
+                "task_family": row.get("task_family", _infer_task_family(str(row["task_type"]))),
                 "difficulty": row["difficulty"],
+                "split": row.get("split", ""),
+                "distribution": row.get("distribution", ""),
+                "ood_type": row.get("ood_type", ""),
                 "mode": row["mode"],
                 "expected_answer": row.get("raw_expected_answer", row.get("expected_answer", "")),
                 "model_answer": row.get("raw_model_answer", row.get("model_answer", "")),
@@ -121,12 +125,13 @@ def summarize_stage4_metrics(metrics: pd.DataFrame) -> dict[str, Any]:
         "mean_reasoning_word_count": _mean(metrics, "reasoning_word_count"),
         "num_rows_scored": int(len(metrics)),
         "num_tasks": int(metrics["task_id"].nunique()),
-        "breakdowns": {
-            "task_type": _breakdown(metrics, "task_type"),
-            "difficulty": _breakdown(metrics, "difficulty"),
-            "mode": _breakdown(metrics, "mode"),
-        },
-    }
+            "breakdowns": {
+                "task_type": _breakdown(metrics, "task_type"),
+                "difficulty": _breakdown(metrics, "difficulty"),
+                "mode": _breakdown(metrics, "mode"),
+                "split": _breakdown(metrics, "split") if "split" in metrics else {},
+            },
+        }
 
 
 def _task_from_row(row: pd.Series) -> Task:
@@ -221,6 +226,18 @@ def _flat_summary(summary: dict[str, Any]) -> dict[str, Any]:
         "mean_usefulness_score": summary["mean_usefulness_score"],
         "mean_process_reward_score": summary["mean_process_reward_score"],
     }
+
+
+def _infer_task_family(task_type: str) -> str:
+    if task_type in {"addition", "subtraction", "multiplication", "arithmetic_two_step"}:
+        return "arithmetic"
+    if task_type.startswith("list_"):
+        return "list"
+    if task_type.startswith("logic_"):
+        return "logic"
+    if task_type.startswith("code_trace_"):
+        return "code"
+    return "unknown"
 
 
 if __name__ == "__main__":

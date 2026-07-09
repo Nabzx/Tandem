@@ -250,6 +250,42 @@ If Ollama is unavailable, the experiment exits with a clear message asking you t
 
 Stage 3 does not perform RL fine-tuning yet. It evaluates real local LLMs inside the TandemRLVR scaffold. RLVR training will be introduced in a later stage.
 
+## Stage 4: Legibility and Process-Reward Metrics
+
+Final-answer accuracy is not enough for TandemRLVR. A senior model can help a junior by giving a clean, inspectable handoff, or it can appear helpful by leaking the final answer, adding irrelevant assumptions, or producing brittle reasoning that fails under corruption. Stage 4 adds deterministic, local process metrics for evaluating the senior reasoning trace itself.
+
+Stage 4 metrics include:
+
+- Legibility metrics: word count, sentence count, average sentence length, too-short/too-long flags, operation hints, step markers, and a heuristic `legibility_score`.
+- Leakage metrics: whether the handoff reveals the expected answer exactly or in normalized form, with special handling for integers, lists, booleans, and text answers.
+- Relevance and hallucination metrics: whether reasoning mentions task entities and task operations, plus flags for suspicious phrases such as `go over 100`, `divide by 1`, `external data`, or `not enough information`.
+- Usefulness metrics: whether tandem handoff improves, hurts, or remains unchanged relative to junior-only performance, and whether corrupted handoff hurts relative to clean tandem handoff.
+- Process reward score: a weighted heuristic combination:
+
+```text
+0.30 * legibility_score
++ 0.25 * leakage_score
++ 0.25 * relevance_score
++ 0.20 * usefulness_score
+```
+
+If usefulness is unavailable for a row, the score is computed from available components and the available component names are recorded. These metrics are heuristic diagnostics, not ground truth. They are intended as candidate reward signals for later RLVR experiments.
+
+Run Stage 4 on Stage 3 results:
+
+```bash
+python -m tandem_rlvr.experiments.run_stage4_process_metrics \
+  --input outputs/stage3_llm_results.csv \
+  --output-dir outputs
+```
+
+Outputs:
+
+```text
+outputs/stage4_process_metrics.csv
+outputs/stage4_process_summary.json
+```
+
 ## Installation
 
 ```bash
@@ -302,6 +338,7 @@ tandem-rlvr/
     tasks/
     agents/
     eval/
+    metrics/
     experiments/
     utils/
   tests/
@@ -314,7 +351,6 @@ The current agents are deliberately simple. `OracleSeniorAgent` produces compact
 
 Future stages:
 
-- Stage 4: add legibility and process-reward metrics.
 - Stage 5: add generalization splits and out-of-distribution evaluations.
 - Stage 6: add an RLVR training loop.
 - Stage 7: compare standard RLVR vs TandemRLVR.

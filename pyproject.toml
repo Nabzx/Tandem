@@ -9,6 +9,7 @@ description = "Minimal research scaffold for tandem RLVR evaluation."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+  "matplotlib>=3.8.0",
   "ollama>=0.6.0",
   "pandas>=2.0.0",
 ]

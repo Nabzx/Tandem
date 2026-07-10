@@ -409,6 +409,31 @@ outputs/stage6_strategy_eval_summary.json
 
 This stage is a policy-optimization smoke test, not full RL model training. It is meant to answer whether simple reward-guided handoff selection improves tandem behavior before moving to heavier RLVR comparisons.
 
+## Stage 7: Research Figures and Report
+
+Stage 7 turns saved Stage 5 and Stage 6 outputs into research figures, a paper-style Markdown report, and a compact project summary. It does not run Ollama or add new RL algorithms; it is an offline analysis layer over existing CSV/JSON artifacts.
+
+Generate figures and reports:
+
+```bash
+python -m tandem_rlvr.experiments.run_stage7_generate_report \
+  --outputs-dir outputs \
+  --report-dir reports
+```
+
+Reports are saved under:
+
+```text
+reports/
+  figures/
+  tandem_rlvr_report.md
+  project_summary.md
+```
+
+The Stage 5 figures summarize accuracy by split/mode, handoff gain by split, and process reward under ID/OOD/stress shift. The Stage 6 figures summarize held-out strategy reward, held-out strategy accuracy, leakage, episode rewards over time, and bandit strategy selection counts. If some output files are missing, Stage 7 skips the unavailable section and records the missing files in the generated report.
+
+This stage supports the final paper-style artifact by separating empirical interpretation from experiment execution. It is especially useful after larger Stage 5/6 runs, where held-out strategy evaluation is more reliable than raw smoke-test episode rewards.
+
 ## Installation
 
 ```bash

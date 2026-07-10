@@ -33,6 +33,7 @@ STAGE6_QUICK_NUM_PREDICT = 96
 STAGE6_NORMAL_TIMEOUT_SECONDS = 120
 STAGE6_QUICK_TIMEOUT_SECONDS = 60
 STAGE6_DEFAULT_TEMPERATURE = 0.0
+SMALL_RUN_MULTIPLIER = 3
 
 
 def main() -> None:
@@ -52,6 +53,14 @@ def main() -> None:
     parser.add_argument("--quick", action="store_true")
     parser.add_argument("--skip-preflight", action="store_true")
     parser.add_argument("--warmup", action="store_true")
+    parser.add_argument("--force-initial-exploration", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--heldout-tasks-per-split", type=int, default=5)
+    parser.add_argument(
+        "--eval-strategies",
+        type=str,
+        default="all",
+        help="Held-out strategy set: all, best, default, or comma-separated values such as best,default.",
+    )
     args = parser.parse_args()
 
     seed_everything(args.seed)
@@ -85,13 +94,15 @@ def main() -> None:
             preflight=not args.skip_preflight,
             warmup=args.warmup,
             progress=True,
+            force_initial_exploration=args.force_initial_exploration,
+            heldout_tasks_per_split=args.heldout_tasks_per_split,
+            eval_strategies=args.eval_strategies,
         )
     except OllamaBackendError as exc:
         print(str(exc), file=sys.stderr, flush=True)
         raise SystemExit(2) from None
 
-    print("\nStage 6 handoff policy optimization summary")
-    print(pd.DataFrame([_flat_summary(result["summary"])]).to_string(index=False))
+    print_stage6_summary(result["episodes"], result["strategy_eval"], result["summary"])
     print(f"\nWrote episode logs to {result['episodes_path']}")
     print(f"Wrote bandit summary to {result['summary_path']}")
     print(f"Wrote strategy eval to {result['strategy_eval_path']}")
@@ -111,6 +122,9 @@ def run_stage6_optimization(
     preflight: bool = False,
     warmup: bool = False,
     progress: bool = False,
+    force_initial_exploration: bool = True,
+    heldout_tasks_per_split: int = 5,
+    eval_strategies: str = "all",
 ) -> dict[str, Any]:
     if preflight:
         preflight_ollama_agents(senior_agent, junior_agent)
@@ -120,6 +134,10 @@ def run_stage6_optimization(
 
     rng = random.Random(seed)
     strategies = list_handoff_strategy_names()
+    warnings = _run_size_warnings(num_episodes, len(strategies))
+    if progress:
+        for warning in warnings:
+            print(warning, flush=True)
     bandit = create_bandit(bandit_name, strategies, seed=seed)
     tasks = build_split_benchmark(max(1, num_episodes // max(1, len(splits))), splits=splits, seed=seed)
     if len(tasks) < num_episodes:
@@ -128,7 +146,10 @@ def run_stage6_optimization(
     episode_rows: list[dict[str, Any]] = []
     for episode in range(1, num_episodes + 1):
         task = rng.choice(tasks)
-        strategy_name = bandit.select_action(context=_context(task))
+        if force_initial_exploration and episode <= len(strategies):
+            strategy_name = strategies[episode - 1]
+        else:
+            strategy_name = bandit.select_action(context=_context(task))
         if progress:
             print(
                 f"Episode {episode}/{num_episodes} | split={task.metadata.get('split', '')} | "
@@ -152,19 +173,20 @@ def run_stage6_optimization(
             print(f"  correct={row['correct']} | reward={row['total_reward']}", flush=True)
 
     episodes = pd.DataFrame(episode_rows)
-    best_strategy = _best_strategy(episodes)
+    episode_best_strategy = _best_strategy(episodes)
     heldout_splits = [split for split in splits if split != "train"] or splits
-    heldout_tasks = build_split_benchmark(5, splits=heldout_splits, seed=seed + 2024)
+    heldout_tasks = build_split_benchmark(heldout_tasks_per_split, splits=heldout_splits, seed=seed + 2024)
+    strategies_to_eval = resolve_eval_strategies(eval_strategies, episode_best_strategy, strategies)
     strategy_eval = evaluate_strategies(
         tasks=heldout_tasks,
-        strategies=[best_strategy, DEFAULT_HANDOFF_STRATEGY, *[s for s in strategies if s not in {best_strategy, DEFAULT_HANDOFF_STRATEGY}]],
+        strategies=strategies_to_eval,
         senior_model=senior_model,
         junior_model=junior_model,
         senior_agent=senior_agent,
         junior_agent=junior_agent,
     )
 
-    summary = summarize_bandit(episodes, strategy_eval, best_strategy)
+    summary = summarize_bandit(episodes, strategy_eval, episode_best_strategy)
     summary.update(
         {
             "num_episodes": num_episodes,
@@ -175,6 +197,11 @@ def run_stage6_optimization(
             "bandit": bandit_name,
             "strategies": strategies,
             "warmup_seconds": warmup_seconds,
+            "force_initial_exploration": force_initial_exploration,
+            "heldout_tasks_per_split": heldout_tasks_per_split,
+            "eval_strategies": eval_strategies,
+            "evaluated_strategies": strategies_to_eval,
+            "warnings": warnings,
         }
     )
     strategy_summary = summarize_strategy_eval(strategy_eval)
@@ -327,7 +354,10 @@ def warmup_ollama_agents(senior_agent: Agent, junior_agent: Agent, progress: boo
     return timings
 
 
-def summarize_bandit(episodes: pd.DataFrame, strategy_eval: pd.DataFrame, best_strategy: str) -> dict[str, Any]:
+def summarize_bandit(episodes: pd.DataFrame, strategy_eval: pd.DataFrame, episode_best_strategy: str) -> dict[str, Any]:
+    heldout_best_strategy = _best_strategy(strategy_eval) if not strategy_eval.empty else None
+    heldout_best_rows = strategy_eval[strategy_eval["strategy"] == heldout_best_strategy] if heldout_best_strategy else strategy_eval.iloc[0:0]
+    episode_best_rows = episodes[episodes["strategy"] == episode_best_strategy]
     return {
         "mean_reward": _mean(episodes, "total_reward"),
         "mean_reward_by_strategy": _mean_by(episodes, "strategy", "total_reward"),
@@ -336,11 +366,17 @@ def summarize_bandit(episodes: pd.DataFrame, strategy_eval: pd.DataFrame, best_s
         "process_reward_by_strategy": _mean_by(episodes, "strategy", "process_reward_score"),
         "leakage_rate_by_strategy": _rate_by(episodes, "strategy", "leaks_exact_answer"),
         "hallucination_rate_by_strategy": _rate_by(episodes, "strategy", "hallucination_flag"),
-        "best_strategy": best_strategy,
-        "best_strategy_mean_reward": _mean(strategy_eval[strategy_eval["strategy"] == best_strategy], "total_reward"),
-        "heldout_accuracy_by_split": _accuracy_by(strategy_eval[strategy_eval["strategy"] == best_strategy], "split"),
-        "heldout_process_reward_by_split": _mean_by(strategy_eval[strategy_eval["strategy"] == best_strategy], "split", "process_reward_score"),
-        "default_strategy_comparison": _default_comparison(strategy_eval, best_strategy),
+        "episode_best_strategy": episode_best_strategy,
+        "episode_best_strategy_mean_reward": _mean(episode_best_rows, "total_reward"),
+        "heldout_best_strategy": heldout_best_strategy,
+        "heldout_best_strategy_mean_reward": _mean(heldout_best_rows, "total_reward"),
+        "heldout_best_strategy_accuracy": None if heldout_best_rows.empty else float(heldout_best_rows["correct"].mean()),
+        "heldout_accuracy_by_split": _accuracy_by(heldout_best_rows, "split"),
+        "heldout_process_reward_by_split": _mean_by(heldout_best_rows, "split", "process_reward_score"),
+        "default_strategy_comparison": _default_comparison(strategy_eval, heldout_best_strategy),
+        # Backward-compatible aliases. Prefer the explicit episode/heldout fields above.
+        "best_strategy": episode_best_strategy,
+        "best_strategy_mean_reward": _mean(episode_best_rows, "total_reward"),
     }
 
 
@@ -478,25 +514,131 @@ def _counts(df: pd.DataFrame, column: str) -> dict[str, int]:
     return {str(key): int(value) for key, value in df[column].value_counts().sort_index().items()}
 
 
-def _default_comparison(strategy_eval: pd.DataFrame, best_strategy: str) -> dict[str, Any]:
+def print_stage6_summary(episodes: pd.DataFrame, strategy_eval: pd.DataFrame, summary: dict[str, Any]) -> None:
+    episode_table = build_episode_summary_table(episodes)
+    heldout_table = build_heldout_summary_table(strategy_eval)
+    comparison = summary["default_strategy_comparison"]
+    print("\nEpisode optimization summary", flush=True)
+    print(episode_table.to_string(index=False), flush=True)
+    print("\nHeld-out strategy evaluation summary", flush=True)
+    print(heldout_table.to_string(index=False), flush=True)
+    print(f"\nEpisode-best strategy: {summary['episode_best_strategy']}", flush=True)
+    print(f"Heldout-best strategy: {summary['heldout_best_strategy']}", flush=True)
+    print(f"Default strategy: {DEFAULT_HANDOFF_STRATEGY}", flush=True)
+    print(
+        "Heldout improvement over default: "
+        f"accuracy_delta={comparison['heldout_best_vs_default_accuracy_delta']} | "
+        f"reward_delta={comparison['heldout_best_vs_default_reward_delta']} | "
+        f"process_reward_delta={comparison['heldout_best_vs_default_process_reward_delta']}",
+        flush=True,
+    )
+
+
+def build_episode_summary_table(episodes: pd.DataFrame) -> pd.DataFrame:
+    rows = []
+    for strategy, group in episodes.groupby("strategy"):
+        rows.append(
+            {
+                "strategy": strategy,
+                "selected_count": int(len(group)),
+                "episode_accuracy": float(group["correct"].mean()),
+                "episode_mean_reward": _mean(group, "total_reward"),
+                "episode_process_reward": _mean(group, "process_reward_score"),
+                "episode_leakage_rate": float(group["leaks_exact_answer"].fillna(False).astype(bool).mean()),
+                "episode_hallucination_rate": float(group["hallucination_flag"].fillna(False).astype(bool).mean()),
+            }
+        )
+    return pd.DataFrame(rows).sort_values(["episode_mean_reward", "strategy"], ascending=[False, True])
+
+
+def build_heldout_summary_table(strategy_eval: pd.DataFrame) -> pd.DataFrame:
+    rows = []
+    for strategy, group in strategy_eval.groupby("strategy"):
+        rows.append(
+            {
+                "strategy": strategy,
+                "heldout_accuracy": float(group["correct"].mean()),
+                "heldout_mean_reward": _mean(group, "total_reward"),
+                "heldout_process_reward": _mean(group, "process_reward_score"),
+                "heldout_leakage_rate": float(group["leaks_exact_answer"].fillna(False).astype(bool).mean()),
+                "heldout_hallucination_rate": float(group["hallucination_flag"].fillna(False).astype(bool).mean()),
+            }
+        )
+    return pd.DataFrame(rows).sort_values(["heldout_mean_reward", "strategy"], ascending=[False, True])
+
+
+def _default_comparison(strategy_eval: pd.DataFrame, heldout_best_strategy: str | None) -> dict[str, Any]:
     default_rows = strategy_eval[strategy_eval["strategy"] == DEFAULT_HANDOFF_STRATEGY]
-    best_rows = strategy_eval[strategy_eval["strategy"] == best_strategy]
+    best_rows = strategy_eval[strategy_eval["strategy"] == heldout_best_strategy] if heldout_best_strategy else strategy_eval.iloc[0:0]
+    default_mean_reward = _mean(default_rows, "total_reward")
+    best_mean_reward = _mean(best_rows, "total_reward")
+    default_process_reward = _mean(default_rows, "process_reward_score")
+    best_process_reward = _mean(best_rows, "process_reward_score")
+    default_accuracy = None if default_rows.empty else float(default_rows["correct"].mean())
+    best_accuracy = None if best_rows.empty else float(best_rows["correct"].mean())
     return {
         "default_strategy": DEFAULT_HANDOFF_STRATEGY,
-        "best_strategy": best_strategy,
-        "default_mean_reward": _mean(default_rows, "total_reward"),
-        "best_mean_reward": _mean(best_rows, "total_reward"),
-        "default_accuracy": None if default_rows.empty else float(default_rows["correct"].mean()),
-        "best_accuracy": None if best_rows.empty else float(best_rows["correct"].mean()),
+        "heldout_best_strategy": heldout_best_strategy,
+        "default_mean_reward": default_mean_reward,
+        "heldout_best_mean_reward": best_mean_reward,
+        "default_process_reward": default_process_reward,
+        "heldout_best_process_reward": best_process_reward,
+        "default_accuracy": default_accuracy,
+        "heldout_best_accuracy": best_accuracy,
+        "heldout_best_vs_default_accuracy_delta": _delta(best_accuracy, default_accuracy),
+        "heldout_best_vs_default_reward_delta": _delta(best_mean_reward, default_mean_reward),
+        "heldout_best_vs_default_process_reward_delta": _delta(best_process_reward, default_process_reward),
     }
+
+
+def _delta(left: float | None, right: float | None) -> float | None:
+    if left is None or right is None:
+        return None
+    return float(left - right)
 
 
 def _flat_summary(summary: dict[str, Any]) -> dict[str, Any]:
     return {
         "mean_reward": summary["mean_reward"],
-        "best_strategy": summary["best_strategy"],
-        "best_strategy_mean_reward": summary["best_strategy_mean_reward"],
+        "episode_best_strategy": summary["episode_best_strategy"],
+        "episode_best_strategy_mean_reward": summary["episode_best_strategy_mean_reward"],
+        "heldout_best_strategy": summary["heldout_best_strategy"],
+        "heldout_best_strategy_mean_reward": summary["heldout_best_strategy_mean_reward"],
     }
+
+
+def resolve_eval_strategies(eval_strategies: str, episode_best_strategy: str, all_strategies: list[str]) -> list[str]:
+    requested = [item.strip() for item in eval_strategies.split(",") if item.strip()]
+    if not requested or requested == ["all"]:
+        return list(all_strategies)
+    resolved: list[str] = []
+    for item in requested:
+        if item == "all":
+            resolved.extend(all_strategies)
+        elif item == "best":
+            resolved.append(episode_best_strategy)
+        elif item == "default":
+            resolved.append(DEFAULT_HANDOFF_STRATEGY)
+        else:
+            get_handoff_strategy(item)
+            resolved.append(item)
+    deduped: list[str] = []
+    for strategy in resolved:
+        if strategy not in deduped:
+            deduped.append(strategy)
+    return deduped
+
+
+def _run_size_warnings(num_episodes: int, num_strategies: int) -> list[str]:
+    warnings: list[str] = []
+    if num_episodes < num_strategies:
+        warnings.append(
+            "Warning: num_episodes is smaller than the number of strategies, so not every strategy may be explored. "
+            "Treat this as a smoke test, not an optimization result."
+        )
+    if num_episodes < SMALL_RUN_MULTIPLIER * num_strategies:
+        warnings.append("Warning: this is a very small optimization run. Strategy rankings may be noisy.")
+    return warnings
 
 
 def resolve_stage6_generation_settings(args: argparse.Namespace) -> tuple[int, int, float]:

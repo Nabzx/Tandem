@@ -356,7 +356,27 @@ The reward is intentionally transparent:
 - 0.30 * hallucination_flag
 ```
 
-Run Stage 6:
+Five episodes is only a smoke test. A meaningful optimization run should use at least 3-5 times the number of strategies. With 6 strategies, the recommended minimum is 30 episodes; a better research run is 60 episodes. Held-out strategy evaluation is more reliable than raw episode reward for selecting a strategy, especially when the bandit has seen only a few examples.
+
+Smoke-test Stage 6:
+
+```bash
+python -m tandem_rlvr.experiments.run_stage6_handoff_policy_optimization \
+  --num-episodes 6 \
+  --seed 42 \
+  --senior-model llama3.1:latest \
+  --junior-model llama3.2:1b \
+  --splits id_eval,ood_eval,stress_eval \
+  --bandit ucb1 \
+  --quick \
+  --num-predict 96 \
+  --max-generation-seconds 120 \
+  --warmup \
+  --heldout-tasks-per-split 1 \
+  --eval-strategies best,default
+```
+
+Recommended actual run:
 
 ```bash
 python -m tandem_rlvr.experiments.run_stage6_handoff_policy_optimization \
@@ -364,26 +384,14 @@ python -m tandem_rlvr.experiments.run_stage6_handoff_policy_optimization \
   --seed 42 \
   --senior-model llama3.1:latest \
   --junior-model llama3.2:1b \
-  --splits train,id_eval,ood_eval \
-  --bandit ucb1 \
-  --quick \
-  --num-predict 192
-```
-
-For slower local machines or cold models, increase the generation timeout and optionally warm the models before the first episode:
-
-```bash
-python -m tandem_rlvr.experiments.run_stage6_handoff_policy_optimization \
-  --num-episodes 5 \
-  --seed 42 \
-  --senior-model llama3.1:latest \
-  --junior-model llama3.2:1b \
-  --splits id_eval \
+  --splits id_eval,ood_eval,stress_eval \
   --bandit ucb1 \
   --quick \
   --num-predict 96 \
   --max-generation-seconds 120 \
-  --warmup
+  --warmup \
+  --heldout-tasks-per-split 2 \
+  --eval-strategies all
 ```
 
 Stage 6 preflights Ollama by default. If a model is missing, run `ollama pull <model>`. If a generation times out, that episode is logged with `failure_type=timeout`, a negative reward, and the bandit continues to the next episode.
@@ -397,7 +405,7 @@ outputs/stage6_strategy_eval.csv
 outputs/stage6_strategy_eval_summary.json
 ```
 
-`stage6_bandit_episodes.csv` records the selected strategy, split, task family, junior answer, correctness, process metrics, leakage/hallucination flags, reward components, and raw senior/junior outputs. The summary files compare mean reward, selection counts, strategy accuracy, held-out split accuracy, and the learned best strategy against the default `structured_steps` strategy.
+`stage6_bandit_episodes.csv` records the selected strategy, split, task family, junior answer, correctness, process metrics, leakage/hallucination flags, reward components, and raw senior/junior outputs. The summary files distinguish the episode-best strategy selected from bandit episode rewards from the heldout-best strategy selected by held-out strategy evaluation. They also compare the heldout-best strategy against the default `structured_steps` strategy.
 
 This stage is a policy-optimization smoke test, not full RL model training. It is meant to answer whether simple reward-guided handoff selection improves tandem behavior before moving to heavier RLVR comparisons.
 

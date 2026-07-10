@@ -8,16 +8,20 @@ from tandem_rlvr.agents.llm import OllamaGenerationTimeout, OllamaModelNotFound
 from tandem_rlvr.agents.llm.handoff_strategies import HANDOFF_STRATEGIES, get_handoff_strategy, list_handoff_strategy_names
 from tandem_rlvr.agents.llm.prompts import senior_handoff_prompt
 from tandem_rlvr.experiments.run_stage6_handoff_policy_optimization import (
+    build_episode_summary_table,
+    build_heldout_summary_table,
     preflight_ollama_agents,
     resolve_stage6_generation_settings,
     run_stage6_optimization,
     run_strategy_episode,
+    summarize_bandit,
     summarize_strategy_eval,
     warmup_ollama_agents,
 )
 from tandem_rlvr.rl import EpsilonGreedyBandit, UCB1Bandit, compute_handoff_reward
 from tandem_rlvr.tasks.base import Task
 from tandem_rlvr.tasks.splits import build_split_benchmark
+import pandas as pd
 
 
 class FakeSenior:
@@ -231,6 +235,8 @@ def test_stage6_optimization_writes_outputs_and_summary(tmp_path: Path) -> None:
         output_dir=tmp_path,
         senior_agent=FakeSenior(),
         junior_agent=FakeJunior(),
+        heldout_tasks_per_split=1,
+        eval_strategies="best,default",
     )
 
     assert result["episodes_path"].exists()
@@ -238,6 +244,8 @@ def test_stage6_optimization_writes_outputs_and_summary(tmp_path: Path) -> None:
     assert result["strategy_eval_path"].exists()
     assert result["strategy_eval_summary_path"].exists()
     assert result["summary"]["best_strategy"] in list_handoff_strategy_names()
+    assert result["summary"]["episode_best_strategy"] in list_handoff_strategy_names()
+    assert result["summary"]["heldout_best_strategy"] in list_handoff_strategy_names()
     assert result["summary"]["bandit"] == "epsilon_greedy"
     assert result["summary"]["heldout_splits"] == ["id_eval"]
     assert "heldout_accuracy_by_split" in result["summary"]
@@ -256,6 +264,7 @@ def test_stage6_strategy_eval_summary_contains_heldout_views(tmp_path: Path) -> 
         output_dir=tmp_path,
         senior_agent=FakeSenior(),
         junior_agent=FakeJunior(),
+        heldout_tasks_per_split=1,
     )
 
     summary = summarize_strategy_eval(result["strategy_eval"])
@@ -290,3 +299,149 @@ def test_stage6_warmup_can_be_mocked() -> None:
 def test_stage6_preflight_model_missing_message() -> None:
     with pytest.raises(OllamaModelNotFound, match="Model not found. Run: ollama pull missing-model"):
         preflight_ollama_agents(MissingModelAgent(), FakeSenior())
+
+
+def test_stage6_summary_distinguishes_episode_best_from_heldout_best() -> None:
+    episodes = pd.DataFrame(
+        [
+            _summary_row("worked_prefix", True, 1.4, 0.6),
+            _summary_row("worked_prefix", True, 1.2, 0.6),
+            _summary_row("verification_hint", False, 0.3, 0.8),
+        ]
+    )
+    heldout = pd.DataFrame(
+        [
+            _summary_row("worked_prefix", True, 1.0, 0.5),
+            _summary_row("verification_hint", True, 1.6, 0.9),
+            _summary_row("structured_steps", True, 1.1, 0.6),
+        ]
+    )
+
+    summary = summarize_bandit(episodes, heldout, "worked_prefix")
+
+    assert summary["episode_best_strategy"] == "worked_prefix"
+    assert summary["episode_best_strategy_mean_reward"] == pytest.approx(1.3)
+    assert summary["heldout_best_strategy"] == "verification_hint"
+    assert summary["heldout_best_strategy_mean_reward"] == pytest.approx(1.6)
+    assert summary["heldout_best_strategy_accuracy"] == 1.0
+    assert summary["best_strategy"] == "worked_prefix"
+
+
+def test_stage6_warns_when_episodes_less_than_strategy_count(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    result = run_stage6_optimization(
+        num_episodes=5,
+        seed=7,
+        senior_model="fake-senior",
+        junior_model="fake-junior",
+        splits=["id_eval"],
+        bandit_name="ucb1",
+        output_dir=tmp_path,
+        senior_agent=FakeSenior(),
+        junior_agent=FakeJunior(),
+        progress=True,
+        heldout_tasks_per_split=1,
+        eval_strategies="best,default",
+    )
+
+    output = capsys.readouterr().out
+    assert "num_episodes is smaller than the number of strategies" in output
+    assert "very small optimization run" in output
+    assert any("smaller than the number of strategies" in warning for warning in result["summary"]["warnings"])
+
+
+def test_stage6_warns_when_run_is_very_small(tmp_path: Path) -> None:
+    result = run_stage6_optimization(
+        num_episodes=12,
+        seed=7,
+        senior_model="fake-senior",
+        junior_model="fake-junior",
+        splits=["id_eval"],
+        bandit_name="ucb1",
+        output_dir=tmp_path,
+        senior_agent=FakeSenior(),
+        junior_agent=FakeJunior(),
+        heldout_tasks_per_split=1,
+        eval_strategies="best,default",
+    )
+
+    assert result["summary"]["warnings"] == ["Warning: this is a very small optimization run. Strategy rankings may be noisy."]
+
+
+def test_stage6_force_initial_exploration_selects_unique_strategies_first(tmp_path: Path) -> None:
+    strategies = list_handoff_strategy_names()
+
+    result = run_stage6_optimization(
+        num_episodes=len(strategies),
+        seed=7,
+        senior_model="fake-senior",
+        junior_model="fake-junior",
+        splits=["id_eval"],
+        bandit_name="epsilon_greedy",
+        output_dir=tmp_path,
+        senior_agent=FakeSenior(),
+        junior_agent=FakeJunior(),
+        heldout_tasks_per_split=1,
+        eval_strategies="best,default",
+    )
+
+    assert list(result["episodes"]["strategy"]) == strategies
+
+
+def test_stage6_default_comparison_has_deltas() -> None:
+    episodes = pd.DataFrame([_summary_row("verification_hint", True, 1.0, 0.8)])
+    heldout = pd.DataFrame(
+        [
+            _summary_row("verification_hint", True, 1.5, 0.9),
+            _summary_row("structured_steps", False, 0.5, 0.4),
+        ]
+    )
+
+    summary = summarize_bandit(episodes, heldout, "verification_hint")
+    comparison = summary["default_strategy_comparison"]
+
+    assert comparison["heldout_best_vs_default_accuracy_delta"] == 1.0
+    assert comparison["heldout_best_vs_default_reward_delta"] == 1.0
+    assert comparison["heldout_best_vs_default_process_reward_delta"] == pytest.approx(0.5)
+
+
+def test_stage6_printed_summary_tables_have_expected_columns() -> None:
+    episodes = pd.DataFrame(
+        [
+            _summary_row("minimal_hint", True, 1.0, 0.7),
+            _summary_row("minimal_hint", False, 0.0, 0.2),
+        ]
+    )
+    heldout = pd.DataFrame([_summary_row("structured_steps", True, 1.2, 0.8)])
+
+    episode_table = build_episode_summary_table(episodes)
+    heldout_table = build_heldout_summary_table(heldout)
+
+    assert list(episode_table.columns) == [
+        "strategy",
+        "selected_count",
+        "episode_accuracy",
+        "episode_mean_reward",
+        "episode_process_reward",
+        "episode_leakage_rate",
+        "episode_hallucination_rate",
+    ]
+    assert list(heldout_table.columns) == [
+        "strategy",
+        "heldout_accuracy",
+        "heldout_mean_reward",
+        "heldout_process_reward",
+        "heldout_leakage_rate",
+        "heldout_hallucination_rate",
+    ]
+
+
+def _summary_row(strategy: str, correct: bool, total_reward: float, process_reward: float) -> dict[str, object]:
+    return {
+        "strategy": strategy,
+        "correct": correct,
+        "total_reward": total_reward,
+        "process_reward_score": process_reward,
+        "leaks_exact_answer": False,
+        "hallucination_flag": False,
+        "split": "id_eval",
+    }

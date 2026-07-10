@@ -87,16 +87,18 @@ def build_paper_report(results: LoadedResults, figures: dict[str, Path] | None =
         "## Limitations",
         "",
         (
-            "This project does not claim to train a frontier model. The tasks are synthetic, local LLM performance depends on the selected Ollama models, and the process reward is hand-designed. "
-            "Stage 6 optimizes a bandit over prompt strategies, not neural model parameters. Small smoke runs should be treated as plumbing checks, not as stable empirical conclusions."
+            "This project does not claim to train a frontier model. It is a small local empirical framework. The tasks are synthetic, local LLM performance depends on the selected Ollama models, and the process reward is hand-designed. "
+            "Stage 6 optimizes a bandit over prompt strategies, not neural model parameters. Results are preliminary, and larger multi-seed experiments are required before making strong empirical claims."
         ),
         "",
         "## Future Work",
         "",
         "- Run larger Stage 5 and Stage 6 sweeps across seeds and model pairs.",
-        "- Compare bandit-selected handoff strategies against full RLVR fine-tuning baselines.",
-        "- Add human inspection or stronger automated judges for handoff legibility.",
+        "- Learn or calibrate a process-reward model.",
+        "- Compare bandit-selected handoff strategies against full RLVR/PPO/GRPO fine-tuning baselines.",
+        "- Expand to harder code and research-agent tasks.",
         "- Stress-test reward hacking, answer leakage, and hallucinated intermediate reasoning.",
+        "- Compare against direct answer leakage baselines.",
         "",
         "## Reproducibility",
         "",
@@ -114,27 +116,23 @@ def build_project_summary(results: LoadedResults) -> str:
     headline = _headline_results(results)
     return (
         "# TandemRLVR Project Summary\n\n"
-        "TandemRLVR is a research-quality Python project studying whether stronger reasoning agents can produce intermediate traces that remain useful and legible to weaker overseers. "
-        "The project builds synthetic verifiable tasks, local Ollama-based senior/junior agents, tandem handoff evaluation, process metrics, OOD generalization tests, and a lightweight RLVR-style bandit over handoff strategies.\n\n"
-        "## What Was Built\n\n"
-        "- Verifiable arithmetic, list, logic, and code-tracing task environments.\n"
-        "- Senior-only, junior-only, tandem handoff, and corrupted handoff evaluations.\n"
-        "- Diagnostic metrics for legibility, leakage, relevance, hallucination, and usefulness.\n"
-        "- ID/OOD/stress split evaluation.\n"
-        "- Stage 6 handoff strategy optimization using contextual bandits.\n"
-        "- Stage 7 report and figure generation from saved outputs.\n\n"
-        "## Why It Matters\n\n"
-        "The project targets a core scalable-oversight question: can stronger models help weaker overseers without hiding the work or simply leaking the answer? "
-        "This is relevant to RL and RLVR because the process metrics can act as transparent reward signals for optimizing helpful, inspectable intermediate reasoning.\n\n"
+        "TandemRLVR is a local, reproducible research framework for studying whether stronger reasoning models can produce intermediate traces that remain useful to weaker overseers. "
+        "It uses verifiable synthetic tasks, local Ollama senior/junior agents, tandem handoff evaluation, process-reward diagnostics, ID/OOD/stress generalization splits, and a lightweight RLVR-style contextual bandit over handoff strategies. "
+        "The goal is not to claim frontier-model training, but to build a concrete empirical scaffold for weak-overseer compatibility.\n\n"
+        "## Technical Contribution\n\n"
+        "The project separates final-answer correctness from handoff quality. It evaluates whether a junior model improves when given senior reasoning, whether that improvement survives corrupted handoffs and distribution shift, and whether transparent process metrics can serve as candidate reward signals. "
+        "Stage 6 optimizes prompt-strategy selection with a bandit; it does not fine-tune LLM weights.\n\n"
         "## Headline Results\n\n"
-        f"{headline}\n\n"
+        f"{headline} In the small Stage 5 run, tandem handoff improved ID and OOD accuracy but hurt stress-split accuracy, suggesting that handoff can help while remaining brittle under harder shifts. Stage 6 smoke runs verify that the reward-and-bandit loop executes, but strategy rankings should be treated as noisy until larger multi-seed runs are completed.\n\n"
+        "## Limitations\n\n"
+        "Experiments use small local models and synthetic tasks. Process rewards are heuristic rather than learned or human-validated. Sample sizes are limited, and prompt-policy optimization is not equivalent to training model weights.\n\n"
         "## Reproduce\n\n"
         "```bash\n"
         "pytest\n"
         "python -m tandem_rlvr.experiments.run_stage7_generate_report --outputs-dir outputs --report-dir reports\n"
         "```\n\n"
         "## Next Steps\n\n"
-        "Run larger multi-seed Stage 6 experiments, compare against full RLVR fine-tuning baselines, and strengthen process-reward validation against reward hacking and answer leakage.\n"
+        "Run larger multi-seed Stage 6 experiments, learn or calibrate process rewards, add a full RLVR/PPO/GRPO fine-tuning baseline, expand to harder code and research-agent tasks, and stress-test leakage and reward hacking.\n"
     )
 
 
@@ -142,7 +140,8 @@ def _abstract(results: LoadedResults) -> str:
     return (
         "TandemRLVR investigates whether a stronger senior reasoning model can help a weaker junior model solve verifiable tasks through intermediate handoff reasoning. "
         f"{_headline_results(results)} "
-        "The current system is an empirical scaffold: it evaluates final-answer accuracy, process-level handoff quality, distribution shift, and a lightweight RLVR-style bandit over prompt strategies."
+        "The current system is a small local empirical framework: it evaluates final-answer accuracy, process-level handoff quality, distribution shift, and a lightweight RLVR-style bandit over prompt strategies. "
+        "It does not perform LLM weight training."
     )
 
 
@@ -155,6 +154,9 @@ def _stage5_section(results: LoadedResults, figures: dict[str, Path]) -> str:
     process = summary.get("process_reward_by_split", {})
     if gains:
         lines.append("Observed handoff gain by split: " + _dict_sentence(gains) + ".")
+        lines.append(
+            "In the current small run, tandem handoff improved ID/OOD performance but degraded stress-split performance, which is consistent with useful but brittle handoff behavior."
+        )
     if process:
         lines.append("Mean process reward by split: " + _dict_sentence(process) + ".")
     if summary.get("ood_generalization_gap") is not None:
@@ -188,6 +190,9 @@ def _stage6_section(results: LoadedResults, figures: dict[str, Path]) -> str:
     warnings = summary.get("warnings", [])
     if warnings:
         lines.append("Run-size warnings: " + " ".join(warnings))
+    lines.append(
+        "These Stage 6 results should be read as an optimization-loop smoke test. Larger held-out evaluations and multiple seeds are needed before ranking handoff strategies."
+    )
     lines.extend(
         _figure_links(
             figures,

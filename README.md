@@ -1,24 +1,182 @@
 # TandemRLVR
 
-TandemRLVR is a small research infrastructure project for studying **Tandem Reinforcement Learning with Verifiable Rewards**: evaluating whether a stronger "senior" reasoning agent can produce intermediate reasoning that remains useful to a weaker "junior" agent.
+TandemRLVR is a local, reproducible research framework for studying whether stronger reasoning models can produce intermediate reasoning traces that remain useful to weaker overseers.
 
-This repository currently implements **Stages 1-3**: a minimal, testable evaluation scaffold with synthetic tasks, tandem handoff evaluation, corrupted-handoff robustness tests, and local LLM agent wrappers through Ollama. It does not implement RL training, PPO/GRPO, or learned rewards yet.
+The project combines local Ollama models, verifiable synthetic tasks, tandem senior/junior handoff evaluation, process-reward metrics, ID/OOD/stress generalization splits, and lightweight RLVR-style bandit optimization over senior handoff strategies. It is designed as a small empirical model of weak-overseer compatibility: can a stronger model produce reasoning that a weaker model can inspect, continue, and verify?
 
-## Research Motivation
+This is not full LLM fine-tuning yet. Stage 6 optimizes a discrete prompt-policy bandit over handoff strategies, not model weights.
 
-Outcome-only RLVR can reward models for reaching correct final answers, but final-answer correctness does not guarantee that intermediate reasoning is legible, inspectable, or useful for oversight. TandemRLVR asks whether we can evaluate and eventually train agents so that a weaker overseer can continue from a stronger agent's partial reasoning.
+## Why This Matters
 
-The Stage 1 tandem setup is:
+Standard RLVR often rewards final-answer correctness. Correct final answers are useful, but they do not tell us whether a model's reasoning was legible, useful to a weaker overseer, non-leaky, or robust under distribution shift.
 
-1. A senior agent receives a task and produces reasoning.
-2. A junior agent receives the task and the senior's reasoning, but not the senior's final answer.
-3. The junior must produce the final answer.
+TandemRLVR tests a stricter oversight question: can a stronger model's intermediate reasoning help a weaker model complete the task without simply revealing the answer? This makes the project a compact empirical testbed for scalable oversight, process rewards, and weak-overseer compatibility.
 
-If the junior succeeds more often with the senior's reasoning than without it, the handoff may be useful. In later stages, this can become a proxy for weak-overseer legibility and robustness.
+## Architecture
+
+```text
+task
+  v
+senior model produces handoff reasoning
+  v
+junior model completes the task
+  v
+verifier checks final answer
+  v
+process metrics score legibility / leakage / relevance / usefulness
+  v
+bandit policy updates senior handoff strategy
+```
+
+## Headline Results
+
+Small local Stage 5 run:
+
+```text
+id_eval:     junior_only 0.50 -> tandem 0.60
+ood_eval:    junior_only 0.30 -> tandem 0.40
+stress_eval: junior_only 0.40 -> tandem 0.30
+```
+
+Interpretation: tandem handoff improved ID and OOD performance in this small run, but failed under stress shift. This suggests handoff can help, but the behavior is brittle under harder distribution shifts.
+
+Stage 6 smoke runs show the system can optimize handoff strategies using verifier and process-reward signals. These runs are deliberately small and noisy; they demonstrate the optimization loop, not a stable ranking of strategies. Larger multi-seed runs are required before making strong empirical claims.
+
+## What Is Implemented
+
+- [x] Synthetic verifiable task environments
+- [x] Local Ollama senior/junior LLM agents
+- [x] Senior-only, junior-only, tandem, corrupted handoff evaluation
+- [x] Process metrics: legibility, leakage, relevance, hallucination, usefulness
+- [x] ID/OOD/stress generalization splits
+- [x] RLVR-style bandit optimization over handoff strategies
+- [x] Report and figure generation
+- [ ] Multi-seed larger-scale experiments
+- [ ] Full RLVR/PPO/GRPO fine-tuning baseline
+
+## Quickstart
+
+```bash
+git clone https://github.com/Nabzx/Tandem.git
+cd Tandem
+python -m venv .venv
+source .venv/bin/activate
+pip install -e .
+```
+
+Install local models:
+
+```bash
+ollama pull llama3.2:1b
+ollama pull llama3.1
+```
+
+Run tests:
+
+```bash
+pytest
+```
+
+Run a small Stage 5 smoke evaluation:
+
+```bash
+python -m tandem_rlvr.experiments.run_stage5_generalization_eval \
+  --num-tasks-per-split 5 \
+  --seed 42 \
+  --senior-model llama3.1:latest \
+  --junior-model llama3.2:1b \
+  --splits id_eval,ood_eval,stress_eval \
+  --modes senior_only,junior_only,tandem_handoff,corrupted_handoff \
+  --quick \
+  --num-predict 96
+```
+
+Generate reports:
+
+```bash
+python -m tandem_rlvr.experiments.run_stage7_generate_report \
+  --outputs-dir outputs \
+  --report-dir reports
+```
+
+## Reproduce Headline Figures
+
+Stage 5 generalization:
+
+```bash
+python -m tandem_rlvr.experiments.run_stage5_generalization_eval \
+  --num-tasks-per-split 5 \
+  --seed 42 \
+  --senior-model llama3.1:latest \
+  --junior-model llama3.2:1b \
+  --splits id_eval,ood_eval,stress_eval \
+  --modes senior_only,junior_only,tandem_handoff,corrupted_handoff \
+  --quick \
+  --num-predict 96
+```
+
+Stage 6 handoff policy optimization smoke run:
+
+```bash
+python -m tandem_rlvr.experiments.run_stage6_handoff_policy_optimization \
+  --num-episodes 6 \
+  --seed 42 \
+  --senior-model llama3.1:latest \
+  --junior-model llama3.2:1b \
+  --splits id_eval,ood_eval,stress_eval \
+  --bandit ucb1 \
+  --quick \
+  --num-predict 96 \
+  --max-generation-seconds 120 \
+  --warmup \
+  --heldout-tasks-per-split 1 \
+  --eval-strategies best,default
+```
+
+Stage 7 report generation:
+
+```bash
+python -m tandem_rlvr.experiments.run_stage7_generate_report \
+  --outputs-dir outputs \
+  --report-dir reports
+```
+
+For research conclusions, use more episodes, larger held-out evaluations, and multiple random seeds.
+
+## Repository Structure
+
+```text
+src/tandem_rlvr/tasks/        task generators and verifiers
+src/tandem_rlvr/agents/       heuristic and Ollama LLM agents
+src/tandem_rlvr/eval/         evaluation loops and perturbations
+src/tandem_rlvr/metrics/      legibility/process-reward metrics
+src/tandem_rlvr/rl/           reward computation and bandit policies
+src/tandem_rlvr/analysis/     plotting and report generation
+reports/                      generated figures and write-ups
+tests/                        unit and smoke tests
+```
+
+## Limitations
+
+- Experiments use small local models, so results are model- and hardware-dependent.
+- Tasks are synthetic and do not yet capture full research-agent complexity.
+- Process metrics are heuristic and transparent, not learned or human-validated rewards.
+- Current runs have limited sample sizes.
+- Stage 6 optimizes prompt-strategy selection, not model weights.
+- Full RLVR/PPO/GRPO fine-tuning baselines are not implemented yet.
+
+## Next Research Steps
+
+1. Run larger multi-seed Stage 6 experiments.
+2. Train or calibrate a learned process-reward model.
+3. Add an RLVR fine-tuning baseline.
+4. Expand to harder code and research-agent tasks.
+5. Add adversarial leakage and reward-hacking tests.
+6. Compare against direct answer leakage baselines.
 
 ## Stage 1 Scope
 
-Implemented:
+Stage 1 established the deterministic evaluation scaffold:
 
 - Synthetic arithmetic task generation for addition, subtraction, and multiplication.
 - Clean task and agent data structures.
@@ -39,14 +197,6 @@ Implemented:
   - correct/incorrect counts per mode
 - CSV output at `outputs/results.csv`.
 - Pytest coverage for generation, verification, agents, and evaluation.
-
-Not implemented yet:
-
-- Hugging Face or API model integrations.
-- RL training.
-- PPO/GRPO.
-- Process rewards.
-- Learned legibility rewards.
 
 ## Stage 2: Task Diversity and Corrupted Handoff Robustness
 
@@ -248,7 +398,7 @@ Interpretation:
 
 If Ollama is unavailable, the experiment exits with a clear message asking you to install Ollama, run `ollama serve`, and pull a model such as `llama3.2:1b`.
 
-Stage 3 does not perform RL fine-tuning yet. It evaluates real local LLMs inside the TandemRLVR scaffold. RLVR training will be introduced in a later stage.
+Stage 3 does not perform RL fine-tuning. It evaluates real local LLMs inside the TandemRLVR scaffold. Later stages add process metrics and bandit prompt-policy optimization; full RLVR fine-tuning remains future work.
 
 ## Stage 4: Legibility and Process-Reward Metrics
 
@@ -475,29 +625,6 @@ python -m tandem_rlvr.experiments.run_stage1_baseline --task-types addition mult
 pytest
 ```
 
-## Project Structure
-
-```text
-tandem-rlvr/
-  README.md
-  pyproject.toml
-  requirements.txt
-  src/tandem_rlvr/
-    tasks/
-    agents/
-    eval/
-    metrics/
-    experiments/
-    utils/
-  tests/
-  outputs/
-```
-
 ## Design Notes
 
 The current agents are deliberately simple. `OracleSeniorAgent` produces compact reasoning across all generated task families, while `WeakJuniorAgent` has a limited direct-solving range and can use simple senior traces that expose a final result in natural language. This creates measurable gaps between junior-only, clean tandem handoff, and corrupted handoff performance without pretending to solve the full research problem.
-
-Future stages:
-
-- Stage 7: compare standard RLVR vs TandemRLVR.
-- Stage 8: write a paper-style report with plots, ablations, and limitations.

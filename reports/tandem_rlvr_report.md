@@ -2,7 +2,7 @@
 
 ## Abstract
 
-TandemRLVR investigates whether a stronger senior reasoning model can help a weaker junior model solve verifiable tasks through intermediate handoff reasoning. Stage 5 handoff gains by split were id_eval=0.100, ood_eval=0.100, stress_eval=-0.100. Stage 6 episode-best strategy was `structured_steps`, while heldout-best strategy was `structured_steps`. The current system is an empirical scaffold: it evaluates final-answer accuracy, process-level handoff quality, distribution shift, and a lightweight RLVR-style bandit over prompt strategies.
+TandemRLVR investigates whether a stronger senior reasoning model can help a weaker junior model solve verifiable tasks through intermediate handoff reasoning. Stage 5 handoff gains by split were id_eval=0.100, ood_eval=0.100, stress_eval=-0.100. Stage 6 episode-best strategy was `structured_steps`, while heldout-best strategy was `structured_steps`. The current system is a small local empirical framework: it evaluates final-answer accuracy, process-level handoff quality, distribution shift, and a lightweight RLVR-style bandit over prompt strategies. It does not perform LLM weight training.
 
 ## Motivation
 
@@ -35,6 +35,8 @@ Process metrics estimate legibility, leakage, relevance, hallucination flags, an
 
 Observed handoff gain by split: id_eval=0.100, ood_eval=0.100, stress_eval=-0.100.
 
+In the current small run, tandem handoff improved ID/OOD performance but degraded stress-split performance, which is consistent with useful but brittle handoff behavior.
+
 Mean process reward by split: id_eval=0.799, ood_eval=0.687, stress_eval=0.683.
 
 OOD generalization gap: 0.200.
@@ -61,6 +63,8 @@ Heldout-best vs default deltas: accuracy=0.000, reward=0.000, process_reward=0.0
 
 Run-size warnings: Warning: this is a very small optimization run. Strategy rankings may be noisy.
 
+These Stage 6 results should be read as an optimization-loop smoke test. Larger held-out evaluations and multiple seeds are needed before ranking handoff strategies.
+
 ![stage6_strategy_reward](figures/stage6_strategy_reward.png)
 
 ![stage6_strategy_accuracy](figures/stage6_strategy_accuracy.png)
@@ -81,14 +85,16 @@ Stage 5 failure counts by split: id_eval=13, ood_eval=24, stress_eval=25. Stage 
 
 ## Limitations
 
-This project does not claim to train a frontier model. The tasks are synthetic, local LLM performance depends on the selected Ollama models, and the process reward is hand-designed. Stage 6 optimizes a bandit over prompt strategies, not neural model parameters. Small smoke runs should be treated as plumbing checks, not as stable empirical conclusions.
+This project does not claim to train a frontier model. It is a small local empirical framework. The tasks are synthetic, local LLM performance depends on the selected Ollama models, and the process reward is hand-designed. Stage 6 optimizes a bandit over prompt strategies, not neural model parameters. Results are preliminary, and larger multi-seed experiments are required before making strong empirical claims.
 
 ## Future Work
 
 - Run larger Stage 5 and Stage 6 sweeps across seeds and model pairs.
-- Compare bandit-selected handoff strategies against full RLVR fine-tuning baselines.
-- Add human inspection or stronger automated judges for handoff legibility.
+- Learn or calibrate a process-reward model.
+- Compare bandit-selected handoff strategies against full RLVR/PPO/GRPO fine-tuning baselines.
+- Expand to harder code and research-agent tasks.
 - Stress-test reward hacking, answer leakage, and hallucinated intermediate reasoning.
+- Compare against direct answer leakage baselines.
 
 ## Reproducibility
 
